@@ -11,8 +11,10 @@ export default function KanbanBoard() {
   const [isBoardModalOpen, setIsBoardModalOpen] = useState(false);
   const [selectedBoardIndex, setSelectedBoardIndex] = useState(0);
   const [isDeleteMode, setIsDeleteMode] = useState(false);
-  const [draggedTaskIndex, setDraggedTaskIndex] = useState(null);
+
+  const [draggedTaskId, setDraggedTaskId] = useState(null);
   const [draggedFromColumn, setDraggedFromColumn] = useState(null);
+  const [droppedOnColumn, setDroppedOnColumn] = useState(null);
 
   const api = "http://localhost:4000";
 
@@ -29,7 +31,7 @@ export default function KanbanBoard() {
         const newColumns = {
           todo: { title: "TODO", tasks: [] },
           doing: { title: "DOING", tasks: [] },
-          done: { title: "DONE", tasks: [] }
+          done: { title: "DONE", tasks: [] },
         };
         res.data.forEach((task) => {
           const col = task.column;
@@ -55,19 +57,17 @@ export default function KanbanBoard() {
       .then(() => {
         setNewTask("");
         setIsModalOpen(false);
-        setSelectedBoardIndex(selectedBoardIndex);
+        setSelectedBoardIndex(selectedBoardIndex); // triggers reload
       });
   };
 
   const handleAddBoard = () => {
     if (!newBoardName.trim()) return;
-    axios
-      .post(`${api}/boards`, { name: newBoardName.trim() })
-      .then((res) => {
-        setBoards([...boards, res.data]);
-        setNewBoardName("");
-        setIsBoardModalOpen(false);
-      });
+    axios.post(`${api}/boards`, { name: newBoardName.trim() }).then((res) => {
+      setBoards([...boards, res.data]);
+      setNewBoardName("");
+      setIsBoardModalOpen(false);
+    });
   };
 
   const handleDeleteTask = (columnKey, taskIndex) => {
@@ -80,38 +80,45 @@ export default function KanbanBoard() {
   };
 
   const handleDragStart = (e, fromColumn, taskIndex) => {
-    setDraggedTaskIndex(taskIndex);
+    const taskId = columns[fromColumn].tasks[taskIndex].id;
+    setDraggedTaskId(taskId);
     setDraggedFromColumn(fromColumn);
   };
 
-  const handleDragEnter = (e, toColumn, toIndex) => {
-    if (draggedFromColumn === null || draggedTaskIndex === null) return;
-
-    if (toColumn === draggedFromColumn && toIndex === draggedTaskIndex) return;
-
-    const task = columns[draggedFromColumn].tasks[draggedTaskIndex];
-    const updatedColumns = { ...columns };
-    updatedColumns[draggedFromColumn].tasks.splice(draggedTaskIndex, 1);
-
-    if (!updatedColumns[toColumn]) {
-      updatedColumns[toColumn] = { title: toColumn.toUpperCase(), tasks: [] };
-    }
-
-    updatedColumns[toColumn].tasks.splice(toIndex, 0, task);
-
-    setColumns(updatedColumns);
-    setDraggedTaskIndex(toIndex);
-    setDraggedFromColumn(toColumn);
+  const handleDragEnter = (e, toColumn) => {
+    setDroppedOnColumn(toColumn);
   };
 
   const handleDrop = () => {
-    if (draggedFromColumn === null || draggedTaskIndex === null) return;
+    if (!draggedTaskId || !draggedFromColumn || !droppedOnColumn) return;
+
+    const draggedTaskIndex = columns[draggedFromColumn].tasks.findIndex(
+      (t) => t.id === draggedTaskId
+    );
 
     const task = columns[draggedFromColumn].tasks[draggedTaskIndex];
-    axios.put(`${api}/tasks/${task.id}`, { column: draggedFromColumn }).then(() => {
-      setDraggedFromColumn(null);
-      setDraggedTaskIndex(null);
-    });
+    if (!task) return;
+
+    const updatedColumns = { ...columns };
+    updatedColumns[draggedFromColumn].tasks.splice(draggedTaskIndex, 1);
+
+    if (!updatedColumns[droppedOnColumn]) {
+      updatedColumns[droppedOnColumn] = {
+        title: droppedOnColumn.toUpperCase(),
+        tasks: [],
+      };
+    }
+
+    updatedColumns[droppedOnColumn].tasks.push(task);
+    setColumns(updatedColumns);
+
+    axios
+      .put(`${api}/tasks/${draggedTaskId}`, { column: droppedOnColumn })
+      .then(() => {
+        setDraggedTaskId(null);
+        setDraggedFromColumn(null);
+        setDroppedOnColumn(null);
+      });
   };
 
   const allowDrop = (e) => e.preventDefault();
@@ -119,13 +126,18 @@ export default function KanbanBoard() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 overflow-hidden">
       <div className="flex h-[calc(100vh-2rem)]">
+        {/* Sidebar */}
         <aside className="w-1/5 bg-gray-800 rounded-2xl p-4 space-y-4 overflow-y-auto">
           <h2 className="text-xl font-bold">kanban</h2>
           <nav className="space-y-2">
             {boards.map((board, index) => (
               <div
                 key={board.id}
-                className={`p-2 rounded-xl cursor-pointer ${index === selectedBoardIndex ? "bg-purple-600 text-white" : "text-gray-400 hover:bg-gray-700"}`}
+                className={`p-2 rounded-xl cursor-pointer ${
+                  index === selectedBoardIndex
+                    ? "bg-purple-600 text-white"
+                    : "text-gray-400 hover:bg-gray-700"
+                }`}
                 onClick={() => setSelectedBoardIndex(index)}
               >
                 {board.name}
@@ -155,6 +167,7 @@ export default function KanbanBoard() {
           </div>
         </aside>
 
+        {/* Main Content */}
         <main className="flex-1 overflow-x-auto pl-4">
           <div className="flex justify-between items-center mb-6 min-w-[600px]">
             <h1 className="text-2xl font-semibold">
@@ -182,6 +195,7 @@ export default function KanbanBoard() {
                 key={key}
                 className="bg-gray-800 rounded-2xl p-4 w-72 flex-shrink-0"
                 onDragOver={allowDrop}
+                onDragEnter={(e) => handleDragEnter(e, key)}
                 onDrop={handleDrop}
               >
                 <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
@@ -196,7 +210,6 @@ export default function KanbanBoard() {
                       className="bg-gray-700 p-4 rounded-xl text-sm text-white cursor-move flex justify-between items-center"
                       draggable
                       onDragStart={(e) => handleDragStart(e, key, i)}
-                      onDragEnter={(e) => handleDragEnter(e, key, i)}
                     >
                       <span className="w-full whitespace-pre-wrap break-words">
                         {task.content}
@@ -218,6 +231,7 @@ export default function KanbanBoard() {
         </main>
       </div>
 
+      {/* Task Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-60 z-50">
           <div className="bg-gray-800 rounded-xl p-6 w-96 space-y-4">
@@ -258,6 +272,7 @@ export default function KanbanBoard() {
         </div>
       )}
 
+      {/* Board Modal */}
       {isBoardModalOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-60 z-50">
           <div className="bg-gray-800 rounded-xl p-6 w-96 space-y-4">
